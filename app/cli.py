@@ -359,12 +359,40 @@ def transition_list() -> None:
 # ---------- diff ----------
 
 
+def _parse_ignore_region(value: str) -> tuple[int, int, int, int]:
+    parts = [p.strip() for p in value.split(",")]
+    if len(parts) != 4:
+        raise typer.BadParameter(
+            f"--ignore-region expects 'x,y,w,h' (got {value!r})"
+        )
+    try:
+        x, y, w, h = (int(p) for p in parts)
+    except ValueError as exc:
+        raise typer.BadParameter(f"--ignore-region values must be ints: {value!r}") from exc
+    if w <= 0 or h <= 0:
+        raise typer.BadParameter(f"--ignore-region width/height must be > 0: {value!r}")
+    return x, y, w, h
+
+
+def _worse_severity(a: str, b: str) -> str:
+    order = ("info", "low", "medium", "needs_review", "high")
+    return max((a, b), key=lambda s: order.index(s) if s in order else 0)
+
+
 @app.command("diff")
 def diff_cmd(
     before: int = typer.Option(..., "--before", help="before observation id"),
     after: int = typer.Option(..., "--after", help="after observation id"),
     keyword: list[str] = typer.Option(
         [], "--keyword", "-k", help="Keyword that should NOT appear after the transition."
+    ),
+    ignore_region: list[str] = typer.Option(
+        [],
+        "--ignore-region",
+        help=(
+            "(screenshot diff only) Black out 'x,y,w,h' before comparing. "
+            "Repeatable. Use to mask dynamic regions like timestamps."
+        ),
     ),
     save: bool = typer.Option(True, "--save/--no-save", help="Save a DiffResult row."),
 ) -> None:
@@ -393,8 +421,28 @@ def diff_cmd(
             if not jd.is_empty:
                 severity = "low"
             diff_type = "json"
+            # Even when the structural diff finds nothing under a sub-tree, a
+            # keyword may still be present unchanged. Apply persistence rules
+            # to the after artifact's text body so callers can spot residuals
+            # like a deleted id surviving in a `pinned[]` array.
+            if keyword:
+                after_text = after_path.read_text(encoding="utf-8", errors="replace")
+                before_text = before_path.read_text(encoding="utf-8", errors="replace")
+                findings = detect_persistence(before_text, after_text, keywords=keyword)
+                if findings:
+                    summary_parts.append("")
+                    summary_parts.append("== Persistence findings ==")
+                    for f in findings:
+                        summary_parts.append(f.to_summary_line())
+                    persist_sev, score = weighted_severity(findings)
+                    summary_parts.append("")
+                    summary_parts.append(
+                        f"weighted score = {score:.2f} -> severity hint = {persist_sev}"
+                    )
+                    severity = _worse_severity(severity, persist_sev)
         elif b.observer_type == "screenshot" and a.observer_type == "screenshot":
-            sd = diff_screenshots(before_path, after_path)
+            regions = [_parse_ignore_region(v) for v in ignore_region]
+            sd = diff_screenshots(before_path, after_path, ignore_regions=regions)
             summary_parts.append("== Screenshot diff ==")
             summary_parts.append(sd.summary())
             severity = sd.severity_hint
