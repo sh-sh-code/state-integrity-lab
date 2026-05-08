@@ -61,22 +61,49 @@ comes. Phase 2 will add an actual runner.
 observation types:
 
 - `json + json` → structural JSON diff (added / removed / changed paths).
-- `screenshot + screenshot` → byte / size compare (perceptual diff is Phase 2).
+- `screenshot + screenshot` → perceptual diff (Pillow + ImageChops); reports
+  the differing-pixel ratio and writes a diff image. Severity is derived
+  from the ratio (see table below).
 - everything else → unified text diff plus persistence heuristics.
 
-### Persistence heuristics (Phase 1)
+`sil bundle diff --before before.zip --after after.zip` is also available
+for export bundles (zip / tar / tar.gz). Each bundle member is compared
+with the strategy that fits its extension (json/text/byte) and the
+keyword-persistence rule is applied to AFTER members.
+
+### Persistence heuristics
 
 The text diff applies these rules and emits `PersistenceFinding`s:
 
-1. **declared_keyword_persisted** — a keyword you passed via `--keyword` still
-   appears in the `after` artifact.
-2. **internal_identifier_visible** — UUIDs, absolute paths, `org_*`, `team_*`,
-   `user_*` IDs, secret-like prefixes, or stack traces appear in `after`.
-3. **line_unchanged_after_transition** — a line containing your declared
-   keyword is identical in `before` and `after` (catches "UI hides but the
-   underlying data is unchanged").
+| Rule                                | Severity (default) | Weight |
+|-------------------------------------|--------------------|--------|
+| `declared_keyword_persisted`        | needs_review       | 5.0    |
+| `internal_identifier_visible` (UUID, abs path, org/team/user id, secret) | medium | 2.0 |
+| `internal_identifier_visible` (stack_trace)                              | high   | 6.0 |
+| `line_unchanged_after_transition`   | low                | 1.0    |
 
-These are hints, not verdicts. Always review by hand before reporting.
+`weighted_severity()` sums the weights and promotes the result:
+
+| Total weight   | Resulting severity  |
+|----------------|---------------------|
+| 0              | info                |
+| ≥ 1            | low                 |
+| ≥ 3 (or any medium finding)        | medium    |
+| ≥ 6 (or any needs_review finding)  | needs_review |
+| ≥ 12 (or any high finding)         | high      |
+
+For the perceptual screenshot diff:
+
+| Differing-pixel ratio | Severity      |
+|-----------------------|---------------|
+| 0                     | info          |
+| < 0.05%               | info          |
+| < 1%                  | low           |
+| < 5%                  | medium        |
+| < 20%                 | needs_review  |
+| ≥ 20%                 | high          |
+
+These are **hints**, not verdicts. Always review by hand before reporting.
 
 ## Report
 
@@ -85,23 +112,32 @@ with the scenario header, hypothesis, scope statement, observations,
 transitions, diff results, delayed checks, and a free-form notes section.
 Redaction (emails, UUIDs, token-like strings, IP addresses) is on by default.
 
-## Phase 2 backlog
+## Phase 2 — implemented
 
-These are the items deliberately deferred from Phase 1:
+All Phase 2 items below now ship in the package:
 
-1. **Playwright-driven observation.** Optional, opt-in per service. Re-uses an
-   existing browser profile so credentials are *yours* and never live in the
-   tool. Captures HTML and screenshots in one shot, with explicit ToS / scope
-   gating before any automation runs.
-2. **Perceptual screenshot diff.** Pillow + ImageChops, with a configurable
-   tolerance and ignore-region masks for dynamic UI elements.
-3. **Delayed-check runner.** A small background process (cron, systemd, or
-   APScheduler) that pulls due `delayed_checks` and re-prompts the operator —
-   it does **not** observe anything itself.
-4. **API observation templates.** Service-specific request shapes (the
-   operator supplies their own credentials), with response normalization for
-   stable diffs.
-5. **Export-bundle comparison.** `sil diff --bundle before.zip after.zip` that
-   walks a typical export and surfaces residual records.
-6. **Severity-hint refinement.** Move from rule-based to a small
-   weighted-rules model with documented rationale.
+1. **Playwright-driven observation** (`sil observe playwright`). Re-uses an
+   operator-supplied `storage_state.json`. SIL never logs in.
+2. **Perceptual screenshot diff** (Pillow + ImageChops) with
+   `--ignore-region` masks. Differing-pixel ratio drives severity.
+3. **Delayed-check runner** (`sil scheduler run-due` / `sil scheduler
+   mark-done`). Prints prescriptions for the operator; does not observe.
+4. **API observation templates** (`sil observe api-template`) with
+   `allowed_endpoints`, env-var-only tokens, mandatory `--max-requests`,
+   and a minimum inter-request delay floor.
+5. **Bundle diff** (`sil bundle diff`) for zip / tar / tar.gz exports with
+   per-member text/JSON/byte comparison and keyword persistence.
+6. **Weighted severity hint** (see the tables above).
+
+## Phase 3+ backlog
+
+- **Multi-region / multi-cache replay helpers** — re-observe through
+  multiple egress points the operator already controls (e.g. their own VPN,
+  their own region-pinned proxies) to surface CDN propagation issues.
+- **i18n-aware UI snapshot normalization** — strip locale-dependent
+  formatting before diffing.
+- **Service-specific API templates** — gated behind explicit
+  `--scope-confirmed` and the operator's own bearer token; never bundled
+  with credentials.
+- **Pluggable observers** — entry-point based, so new observation types can
+  ship in a separate package without modifying SIL.

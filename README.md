@@ -150,20 +150,83 @@ delayed_after) see [`docs/methodology.md`](docs/methodology.md).
 - Markdown report generator with secret redaction
 - Documentation and pytest unit tests
 
-## What is deliberately **not** in Phase 1
+## What's new in Phase 2
 
-These are reserved for Phase 2+:
+- **Playwright observer** (`sil observe playwright`). Loads a logged-in
+  profile via `--storage-state` (the operator exports it ahead of time);
+  SIL never performs logins itself. Captures screenshot + DOM in one shot.
+- **Perceptual screenshot diff** using Pillow + ImageChops. Reports the
+  fraction of differing pixels, writes a diff image, and supports
+  `--ignore-region x,y,w,h` masks for dynamic UI elements. Severity is now
+  derived from the differing-pixel ratio.
+- **Bundle diff** (`sil bundle diff --before before.zip --after after.zip
+  --keyword foo`). Compares two export archives (zip/tar/tar.gz), runs
+  per-member text/JSON/byte diffs, and applies the keyword-persistence rule
+  to the AFTER bundle.
+- **API templates** (`sil observe api-template`). Each template declares an
+  `allowed_endpoints` allow-list, reads its token from a specific env var
+  only, enforces a minimum inter-request delay (≥1s), and refuses to run
+  without `--max-requests`. Tokens never appear in logs or artifacts.
+- **Delayed-check runner** (`sil scheduler run-due`). Walks due
+  `delayed_checks` rows and prints the prescription for the operator —
+  the runner does NOT perform observations itself. `sil scheduler
+  mark-done --check <id>` records that the operator has acted.
+- **Weighted severity scoring** for persistence findings (see
+  `docs/methodology.md`).
+- **Lint/CI**: ruff + mypy + pytest matrix on Python 3.11/3.12 via GitHub
+  Actions.
 
-- Playwright-driven, logged-in browser observation
-- Perceptual screenshot diff (Pillow / ImageChops based)
-- Background runner that actually executes scheduled delayed checks
-- Service-specific authenticated API observation templates
-- Export-bundle (zip / tar) comparison helpers
-- Severity-hint scoring improvements
+### Optional Playwright dependency
 
-## Next steps after Phase 1
+```bash
+pip install -e .[playwright]
+playwright install chromium
+```
 
-See the bottom of `docs/methodology.md` for the suggested Phase 2 task list.
+Then export an existing logged-in browser profile to a JSON file your
+operator owns, e.g.:
+
+```python
+# Run this once, manually, on a machine where you are logged in to YOUR account.
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    b = p.chromium.launch(headless=False)
+    ctx = b.new_context()
+    page = ctx.new_page()
+    page.goto("https://example.com/login")
+    input("Log in manually, then press Enter to save state...")
+    ctx.storage_state(path="storage_state.json")
+```
+
+Use that file with `sil observe playwright --storage-state ./storage_state.json`.
+
+### Scheduling delayed re-observation prompts
+
+Add a single cron entry like:
+
+```cron
+*/5 * * * * cd /path/to/state-integrity-lab && /path/to/.venv/bin/sil scheduler run-due >> ~/.sil-runner.log 2>&1
+```
+
+The runner only prints prescriptions; it never runs observations on its own.
+
+## What is deliberately **still not** automated
+
+These are intentionally left to the operator:
+
+- Logging in to third-party services. SIL refuses to.
+- Crawling. The Playwright observer captures one URL per call.
+- Bypassing rate limits, retrying around 429s, or running concurrent
+  sessions to "speed things up".
+
+## Next steps
+
+Suggested Phase 3+ tasks (see `docs/methodology.md` for details):
+
+- Multi-region / multi-cache replay helpers.
+- Cross-language UI snapshot normalization (i18n strings).
+- Built-in API templates for common Bug Bounty programs (each gated behind
+  the operator's own credentials and an explicit `--scope-confirmed` flag).
 
 ## License
 

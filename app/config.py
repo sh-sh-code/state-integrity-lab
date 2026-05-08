@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 try:
-    from dotenv import load_dotenv  # type: ignore
+    from dotenv import load_dotenv
 except Exception:  # pragma: no cover - dotenv is optional at runtime.
     load_dotenv = None  # type: ignore[assignment]
 
@@ -46,7 +46,7 @@ class Settings:
     redact_by_default: bool
 
     @classmethod
-    def load(cls) -> "Settings":
+    def load(cls) -> Settings:
         root = _project_root()
         db_path = Path(os.getenv("SIL_DB_PATH", str(root / "state_integrity_lab.sqlite3"))).resolve()
         artifacts_dir = Path(os.getenv("SIL_ARTIFACTS_DIR", str(root / "artifacts"))).resolve()

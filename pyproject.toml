@@ -27,14 +27,17 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "pydantic>=2.6.0",
     "Pillow>=10.0.0",
+    "requests>=2.31.0",
 ]
 
 [project.optional-dependencies]
-playwright = ["playwright>=1.43.0"]
+playwright = ["playwright>=1.43.0", "pytest-playwright>=0.5.0"]
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=5.0.0",
     "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "types-requests>=2.31.0",
 ]
 
 [project.scripts]
@@ -51,3 +54,18 @@ addopts = "-q"
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]  # line length handled by formatter / max-line-length is advisory.
+
+[tool.ruff.lint.per-file-ignores]
+# Typer's API requires `typer.Option(...)` calls as default values.
+"app/cli.py" = ["B008"]
+
+[tool.mypy]
+python_version = "3.11"
+strict_optional = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+exclude = ["tests/", "reports/", "artifacts/"]

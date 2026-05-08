@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Optional
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
@@ -13,15 +13,15 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.config import Settings, get_settings
 from app.models import Base
 
-_engine: Optional[Engine] = None
-_SessionLocal: Optional[sessionmaker[Session]] = None
+_engine: Engine | None = None
+_SessionLocal: sessionmaker[Session] | None = None
 
 
 def _build_url(db_path: Path) -> str:
     return f"sqlite:///{db_path}"
 
 
-def init_engine(settings: Optional[Settings] = None) -> Engine:
+def init_engine(settings: Settings | None = None) -> Engine:
     """Build (or rebuild) the global engine and session factory."""
     global _engine, _SessionLocal
     settings = settings or get_settings()
@@ -37,7 +37,7 @@ def get_engine() -> Engine:
     return _engine
 
 
-def init_db(settings: Optional[Settings] = None) -> Engine:
+def init_db(settings: Settings | None = None) -> Engine:
     """Create the schema if missing. Idempotent."""
     engine = init_engine(settings)
     Base.metadata.create_all(engine)

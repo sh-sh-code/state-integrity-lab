@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     DateTime,
@@ -16,7 +15,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Base(DeclarativeBase):
@@ -47,23 +46,23 @@ class Scenario(Base):
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     target_service: Mapped[str] = mapped_column(String(255))
     hypothesis: Mapped[str] = mapped_column(Text, default="")
-    template: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    template: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="draft")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
-    observations: Mapped[list["Observation"]] = relationship(
+    observations: Mapped[list[Observation]] = relationship(
         back_populates="scenario", cascade="all, delete-orphan"
     )
-    transitions: Mapped[list["Transition"]] = relationship(
+    transitions: Mapped[list[Transition]] = relationship(
         back_populates="scenario", cascade="all, delete-orphan"
     )
-    diffs: Mapped[list["DiffResult"]] = relationship(
+    diffs: Mapped[list[DiffResult]] = relationship(
         back_populates="scenario", cascade="all, delete-orphan"
     )
-    reports: Mapped[list["Report"]] = relationship(
+    reports: Mapped[list[Report]] = relationship(
         back_populates="scenario", cascade="all, delete-orphan"
     )
-    delayed_checks: Mapped[list["DelayedCheck"]] = relationship(
+    delayed_checks: Mapped[list[DelayedCheck]] = relationship(
         back_populates="scenario", cascade="all, delete-orphan"
     )
 
@@ -75,7 +74,7 @@ class Observation(Base):
     scenario_id: Mapped[int] = mapped_column(ForeignKey("scenarios.id", ondelete="CASCADE"))
     phase: Mapped[str] = mapped_column(String(32))
     observer_type: Mapped[str] = mapped_column(String(32))
-    artifact_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    artifact_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     note: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
@@ -130,7 +129,7 @@ class DelayedCheck(Base):
     scenario_id: Mapped[int] = mapped_column(ForeignKey("scenarios.id", ondelete="CASCADE"))
     run_after: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     note: Mapped[str] = mapped_column(Text, default="")
-    executed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     scenario: Mapped[Scenario] = relationship(back_populates="delayed_checks")

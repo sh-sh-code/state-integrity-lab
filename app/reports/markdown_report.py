@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable
 
 from sqlalchemy.orm import Session
 
@@ -43,8 +43,8 @@ def _format_dt(value: datetime | None) -> str:
     if value is None:
         return "—"
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%SZ")
 
 
 def _section_observations(
@@ -166,7 +166,7 @@ def generate_markdown_report(
     if scenario is None:
         raise ValueError(f"Scenario id={scenario_id} not found.")
 
-    timestamp = datetime.now(timezone.utc)
+    timestamp = datetime.now(UTC)
     filename = (
         f"scenario_{scenario.id:04d}_"
         f"{re.sub(r'[^a-z0-9._-]+', '-', scenario.name.lower()).strip('-')}_"

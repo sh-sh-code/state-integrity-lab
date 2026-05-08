@@ -8,7 +8,7 @@ trigger the re-observation prompt at the recorded time.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -44,7 +44,7 @@ def schedule_delayed_check(
     scenario = session.get(Scenario, scenario_id)
     if scenario is None:
         raise ValueError(f"Scenario id={scenario_id} not found.")
-    base = now or datetime.now(timezone.utc)
+    base = now or datetime.now(UTC)
     run_after = base + parse_delay(delay)
     check = DelayedCheck(
         scenario_id=scenario.id,
@@ -57,7 +57,7 @@ def schedule_delayed_check(
 
 
 def list_due_checks(session: Session, *, now: datetime | None = None) -> list[DelayedCheck]:
-    base = now or datetime.now(timezone.utc)
+    base = now or datetime.now(UTC)
     stmt = (
         select(DelayedCheck)
         .where(DelayedCheck.executed_at.is_(None))

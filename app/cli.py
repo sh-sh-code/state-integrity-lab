@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -31,19 +30,26 @@ from app.config import get_settings
 from app.db import init_db, session_scope
 from app.diff import (
     detect_persistence,
+    diff_bundles,
     diff_json_files,
     diff_screenshots,
     diff_text,
+    weighted_severity,
 )
 from app.models import (
-    DiffResult,
-    Observation,
     OBSERVATION_PHASES,
     SCENARIO_STATUSES,
+    DiffResult,
+    Observation,
     Scenario,
     Transition,
 )
 from app.observer import (
+    PlaywrightUnavailable,
+    StorageStateRequired,
+    capture_page,
+    fetch_api_template,
+    list_api_templates,
     record_api_response,
     record_html,
     record_json,
@@ -51,7 +57,13 @@ from app.observer import (
     record_screenshot,
 )
 from app.reports import generate_markdown_report
-from app.scheduler import DEFAULT_DELAYS, schedule_delayed_check
+from app.scheduler import (
+    DEFAULT_DELAYS,
+    list_due,
+    mark_done,
+    render_text,
+    schedule_delayed_check,
+)
 from app.transitions import (
     KNOWN_TRANSITIONS,
     SCENARIO_TEMPLATE_LIBRARY,
@@ -71,17 +83,17 @@ scenario_app = typer.Typer(help="Manage verification scenarios.")
 observe_app = typer.Typer(help="Record before / after / delayed_after observations.")
 transition_app = typer.Typer(help="Mark state transitions performed by a human.")
 report_app = typer.Typer(help="Generate Markdown reports.")
+diff_app = typer.Typer(help="Diff bundles, etc.")
+scheduler_app = typer.Typer(help="Inspect and execute delayed-check prompts.")
 
 app.add_typer(scenario_app, name="scenario")
 app.add_typer(observe_app, name="observe")
 app.add_typer(transition_app, name="transition")
 app.add_typer(report_app, name="report")
+app.add_typer(diff_app, name="bundle")
+app.add_typer(scheduler_app, name="scheduler")
 
 console = Console()
-
-
-def _phase_option() -> typer.Option:
-    return typer.Option(..., "--phase", help=f"One of: {', '.join(OBSERVATION_PHASES)}.")
 
 
 def _check_phase(phase: str) -> None:
@@ -110,7 +122,7 @@ def scenario_create(
     name: str = typer.Option(..., "--name", help="Unique short name (slug-friendly)."),
     target_service: str = typer.Option(..., "--target-service"),
     hypothesis: str = typer.Option("", "--hypothesis"),
-    template: Optional[str] = typer.Option(
+    template: str | None = typer.Option(
         None,
         "--template",
         help=f"Optional template key. Known: {', '.join(SCENARIO_TEMPLATE_LIBRARY)}.",
@@ -200,7 +212,7 @@ def observe_screenshot(
     phase: str = typer.Option(..., "--phase"),
     file: Path = typer.Option(..., "--file", exists=True, dir_okay=False, readable=True),
     note: str = typer.Option("", "--note"),
-    label: Optional[str] = typer.Option(None, "--label"),
+    label: str | None = typer.Option(None, "--label"),
 ) -> None:
     _check_phase(phase)
     init_db()
@@ -214,10 +226,10 @@ def observe_screenshot(
 def observe_html(
     scenario_id: int = typer.Option(..., "--scenario"),
     phase: str = typer.Option(..., "--phase"),
-    file: Optional[Path] = typer.Option(
+    file: Path | None = typer.Option(
         None, "--file", exists=True, dir_okay=False, readable=True
     ),
-    inline: Optional[str] = typer.Option(None, "--inline", help="Raw HTML text."),
+    inline: str | None = typer.Option(None, "--inline", help="Raw HTML text."),
     note: str = typer.Option("", "--note"),
     label: str = typer.Option("snapshot", "--label"),
 ) -> None:
@@ -243,10 +255,10 @@ def observe_html(
 def observe_json(
     scenario_id: int = typer.Option(..., "--scenario"),
     phase: str = typer.Option(..., "--phase"),
-    file: Optional[Path] = typer.Option(
+    file: Path | None = typer.Option(
         None, "--file", exists=True, dir_okay=False, readable=True
     ),
-    inline: Optional[str] = typer.Option(None, "--inline", help="Raw JSON text."),
+    inline: str | None = typer.Option(None, "--inline", help="Raw JSON text."),
     note: str = typer.Option("", "--note"),
     label: str = typer.Option("payload", "--label"),
 ) -> None:
@@ -259,7 +271,7 @@ def observe_json(
         try:
             payload = json.loads(inline)
         except Exception as exc:
-            raise typer.BadParameter(f"--inline is not valid JSON: {exc}")
+            raise typer.BadParameter(f"--inline is not valid JSON: {exc}") from exc
     with session_scope() as session:
         obs = record_json(
             session,
@@ -280,7 +292,7 @@ def observe_api(
     phase: str = typer.Option(..., "--phase"),
     file: Path = typer.Option(..., "--file", exists=True, dir_okay=False, readable=True),
     endpoint: str = typer.Option("", "--endpoint"),
-    status: Optional[int] = typer.Option(None, "--status"),
+    status: int | None = typer.Option(None, "--status"),
     note: str = typer.Option("", "--note"),
 ) -> None:
     _check_phase(phase)
@@ -380,30 +392,29 @@ def diff_cmd(
             summary_parts.append(jd.summary())
             if not jd.is_empty:
                 severity = "low"
+            diff_type = "json"
         elif b.observer_type == "screenshot" and a.observer_type == "screenshot":
             sd = diff_screenshots(before_path, after_path)
             summary_parts.append("== Screenshot diff ==")
             summary_parts.append(sd.summary())
-            if not sd.same_bytes:
-                severity = "needs_review"
+            severity = sd.severity_hint
             diff_type = "screenshot"
         else:
             before_text = before_path.read_text(encoding="utf-8", errors="replace")
             after_text = after_path.read_text(encoding="utf-8", errors="replace")
-            text_diff = diff_text(before_text, after_text)
+            text_diff_str = diff_text(before_text, after_text)
             summary_parts.append("== Unified text diff ==")
-            summary_parts.append(text_diff or "(no textual differences)")
+            summary_parts.append(text_diff_str or "(no textual differences)")
             findings = detect_persistence(before_text, after_text, keywords=keyword)
             if findings:
                 summary_parts.append("")
                 summary_parts.append("== Persistence findings ==")
                 for f in findings:
                     summary_parts.append(f.to_summary_line())
-                # Pick the highest severity hint.
-                ranking = ["info", "low", "medium", "needs_review", "high"]
-                severity = max(
-                    (f.severity_hint for f in findings),
-                    key=lambda s: ranking.index(s) if s in ranking else 0,
+                severity, score = weighted_severity(findings)
+                summary_parts.append("")
+                summary_parts.append(
+                    f"weighted score = {score:.2f} -> severity hint = {severity}"
                 )
             diff_type = "text"
 
@@ -459,6 +470,191 @@ def report_generate(
     with session_scope() as session:
         path = generate_markdown_report(session, scenario_id, redact_secrets=redact_secrets)
     console.print(f"[green]wrote report[/green] {path}")
+
+
+# ---------- observe playwright ----------
+
+
+@observe_app.command("playwright")
+def observe_playwright(
+    scenario_id: int = typer.Option(..., "--scenario"),
+    phase: str = typer.Option(..., "--phase"),
+    url: str = typer.Option(..., "--url"),
+    storage_state: Path = typer.Option(
+        ...,
+        "--storage-state",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help=(
+            "Existing logged-in browser profile (Playwright storage_state.json). "
+            "SIL never performs logins."
+        ),
+    ),
+    wait_for: str | None = typer.Option(None, "--wait-for", help="CSS selector to wait for."),
+    mask: list[str] = typer.Option(
+        [], "--mask", help="CSS selectors to black out before screenshot. Repeatable."
+    ),
+    timeout_ms: int = typer.Option(15000, "--timeout-ms"),
+    note: str = typer.Option("", "--note"),
+    label: str = typer.Option("page", "--label"),
+) -> None:
+    """Capture a screenshot + DOM via Playwright with a pre-existing logged-in
+    profile. Authorized scope only."""
+    _check_phase(phase)
+    init_db()
+    try:
+        with session_scope() as session:
+            shot, html = capture_page(
+                session,
+                scenario_id,
+                phase,
+                url=url,
+                storage_state=storage_state,
+                wait_for=wait_for,
+                mask_selectors=mask,
+                note=note,
+                label=label,
+                timeout_ms=timeout_ms,
+            )
+            console.print(
+                f"[green]captured[/green] screenshot id={shot.id} html id={html.id}"
+            )
+            console.print(f"  screenshot: {shot.artifact_path}")
+            console.print(f"  html:       {html.artifact_path}")
+    except PlaywrightUnavailable as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    except StorageStateRequired as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
+# ---------- observe api-template ----------
+
+
+@observe_app.command("api-template")
+def observe_api_template(
+    scenario_id: int = typer.Option(..., "--scenario"),
+    phase: str = typer.Option(..., "--phase"),
+    template: str = typer.Option(..., "--template"),
+    endpoint: str = typer.Option(..., "--endpoint"),
+    max_requests: int = typer.Option(
+        ..., "--max-requests", help="Hard cap on requests for this invocation."
+    ),
+    interval: float | None = typer.Option(
+        None, "--interval", help="Seconds between requests (>= template floor)."
+    ),
+    note: str = typer.Option("", "--note"),
+    label: str | None = typer.Option(None, "--label"),
+) -> None:
+    """Issue a templated, rate-limited API request. Token comes ONLY from the
+    template's environment variable."""
+    _check_phase(phase)
+    init_db()
+    with session_scope() as session:
+        try:
+            obs = fetch_api_template(
+                session,
+                scenario_id,
+                phase,
+                template_name=template,
+                endpoint=endpoint,
+                max_requests=max_requests,
+                min_interval_seconds=interval,
+                note=note,
+                label=label,
+            )
+        except Exception as exc:
+            raise typer.BadParameter(str(exc)) from exc
+    console.print(f"[green]recorded api template observation[/green] id={obs.id}")
+    console.print(f"  artifact: {obs.artifact_path}")
+
+
+@observe_app.command("api-templates")
+def observe_api_templates_list() -> None:
+    """List built-in API templates and their allow-lists."""
+    table = Table("name", "base_url", "allowed_endpoints", "token_env")
+    for tpl in list_api_templates():
+        table.add_row(
+            tpl.name,
+            tpl.base_url,
+            ", ".join(tpl.allowed_endpoints),
+            tpl.token_env,
+        )
+    console.print(table)
+
+
+# ---------- bundle diff ----------
+
+
+@diff_app.command("diff")
+def bundle_diff_cmd(
+    before: Path = typer.Option(..., "--before", exists=True, dir_okay=False, readable=True),
+    after: Path = typer.Option(..., "--after", exists=True, dir_okay=False, readable=True),
+    keyword: list[str] = typer.Option([], "--keyword", "-k"),
+    scenario: int | None = typer.Option(None, "--scenario", help="Save a DiffResult row."),
+) -> None:
+    """Diff two export bundles (.zip / .tar / .tar.gz)."""
+    diff = diff_bundles(before, after, keywords=keyword)
+    summary = diff.summary()
+    console.print(summary)
+
+    if scenario is not None:
+        init_db()
+        with session_scope() as session:
+            if session.get(Scenario, scenario) is None:
+                raise typer.BadParameter(f"scenario id={scenario} not found")
+            severity = "info"
+            if diff.changed_members:
+                severity = "low"
+            persistence_count = sum(len(m.persistence) for m in diff.members)
+            if persistence_count:
+                severity = "needs_review"
+            row = DiffResult(
+                scenario_id=scenario,
+                before_observation_id=0,
+                after_observation_id=0,
+                diff_type="bundle",
+                summary=summary,
+                severity_hint=severity,
+            )
+            session.add(row)
+            session.flush()
+            console.print(
+                f"\n[green]saved bundle diff[/green] id={row.id} severity={severity}"
+            )
+
+
+# ---------- scheduler runner ----------
+
+
+@scheduler_app.command("run-due")
+def scheduler_run_due() -> None:
+    """Print prescriptions for delayed checks whose run_after has passed.
+
+    The runner does NOT capture observations itself — it only tells the
+    operator what to re-observe."""
+    init_db()
+    with session_scope() as session:
+        items = list_due(session)
+        text = render_text(items)
+        console.print(text)
+        if items:
+            console.print(
+                f"\n[yellow]{len(items)} due check(s) need operator action."
+                "[/yellow] Run `sil scheduler mark-done --check <id>` after each."
+            )
+
+
+@scheduler_app.command("mark-done")
+def scheduler_mark_done(
+    check_id: int = typer.Option(..., "--check"),
+) -> None:
+    init_db()
+    with session_scope() as session:
+        check = mark_done(session, check_id)
+        console.print(
+            f"[green]marked done[/green] id={check.id} executed_at={check.executed_at}"
+        )
 
 
 def main() -> None:  # pragma: no cover - thin wrapper.

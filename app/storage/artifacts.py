@@ -17,15 +17,15 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 from app.config import Settings, get_settings
 
 
-class ArtifactKind(str, Enum):
+class ArtifactKind(StrEnum):
     MANUAL = "manual"
     SCREENSHOT = "screenshot"
     HTML = "html"
@@ -41,7 +41,7 @@ def _slug(value: str) -> str:
 
 
 def _timestamp() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def scenario_dir(
