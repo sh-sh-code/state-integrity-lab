@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# venvs
+.venv/
+venv/
+env/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Project artifacts
+.env
+*.sqlite3
+*.sqlite
+artifacts/*
+!artifacts/.gitkeep
+reports/*
+!reports/.gitkeep
