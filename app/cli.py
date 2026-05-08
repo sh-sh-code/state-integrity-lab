@@ -38,10 +38,12 @@ from app.diff import (
 )
 from app.models import (
     OBSERVATION_PHASES,
+    SCENARIO_METADATA_FIELDS,
     SCENARIO_STATUSES,
     DiffResult,
     Observation,
     Scenario,
+    ScenarioMetadata,
     Transition,
 )
 from app.observer import (
@@ -181,11 +183,94 @@ def scenario_list() -> None:
 
 @scenario_app.command("templates")
 def scenario_templates() -> None:
-    """List built-in scenario templates."""
+    """List built-in scenario templates (alias: list-templates)."""
     table = Table("key", "title", "hypothesis")
     for tpl in SCENARIO_TEMPLATE_LIBRARY.values():
         table.add_row(tpl.key, tpl.title, tpl.hypothesis)
     console.print(table)
+
+
+@scenario_app.command("list-templates")
+def scenario_list_templates() -> None:
+    """List built-in scenario templates."""
+    scenario_templates()
+
+
+@scenario_app.command("show-template")
+def scenario_show_template(
+    name: str = typer.Argument(..., help=f"Template key. Known: {', '.join(SCENARIO_TEMPLATE_LIBRARY)}"),
+) -> None:
+    """Show a template's hypothesis, prerequisites, observations, traps, and fix direction."""
+    tpl = get_template(name)
+    if tpl is None:
+        raise typer.BadParameter(
+            f"unknown template {name!r}. Known: {list(SCENARIO_TEMPLATE_LIBRARY)}"
+        )
+    for line in tpl.show_lines():
+        console.print(line)
+
+
+@scenario_app.command("annotate")
+def scenario_annotate(
+    scenario_id: int = typer.Option(..., "--scenario"),
+    scope: str | None = typer.Option(None, "--scope", help="Scope & authorization summary."),
+    test_data: str | None = typer.Option(None, "--test-data", help="Description of test data used."),
+    expected: str | None = typer.Option(None, "--expected", help="Expected behavior."),
+    actual: str | None = typer.Option(None, "--actual", help="Actual behavior observed."),
+    impact: str | None = typer.Option(None, "--impact", help="Security impact."),
+    limitations: str | None = typer.Option(None, "--limitations", help="Caveats / unverified assumptions."),
+    fix: str | None = typer.Option(None, "--fix", help="Recommended fix direction."),
+) -> None:
+    """Attach Bug Bounty / QA report prose to a scenario.
+
+    Each flag is optional; only the supplied fields are updated. Run again
+    with different flags to update fields incrementally.
+    """
+    init_db()
+    if all(v is None for v in (scope, test_data, expected, actual, impact, limitations, fix)):
+        raise typer.BadParameter("provide at least one annotation flag")
+    with session_scope() as session:
+        scenario = session.get(Scenario, scenario_id)
+        if scenario is None:
+            raise typer.BadParameter(f"scenario id={scenario_id} not found")
+        meta = scenario.metadata_row or ScenarioMetadata(scenario_id=scenario_id)
+        if scope is not None:
+            meta.scope_authorization = scope
+        if test_data is not None:
+            meta.test_data_used = test_data
+        if expected is not None:
+            meta.expected_behavior = expected
+        if actual is not None:
+            meta.actual_behavior = actual
+        if impact is not None:
+            meta.security_impact = impact
+        if limitations is not None:
+            meta.limitations = limitations
+        if fix is not None:
+            meta.recommended_fix = fix
+        session.add(meta)
+        session.flush()
+        console.print(f"[green]annotated scenario[/green] id={scenario_id}")
+
+
+@scenario_app.command("show-metadata")
+def scenario_show_metadata(
+    scenario_id: int = typer.Option(..., "--scenario"),
+) -> None:
+    """Print the metadata currently attached to a scenario."""
+    init_db()
+    with session_scope() as session:
+        scenario = session.get(Scenario, scenario_id)
+        if scenario is None:
+            raise typer.BadParameter(f"scenario id={scenario_id} not found")
+        meta = scenario.metadata_row
+        if meta is None:
+            console.print("[yellow]no metadata recorded yet.[/yellow]")
+            console.print("Run `sil scenario annotate --scenario <id> --scope ... --expected ...`.")
+            return
+        for field_name in SCENARIO_METADATA_FIELDS:
+            value = getattr(meta, field_name)
+            console.print(f"[bold]{field_name}[/bold]: {value or '(empty)'}")
 
 
 # ---------- observe ----------

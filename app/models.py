@@ -65,6 +65,11 @@ class Scenario(Base):
     delayed_checks: Mapped[list[DelayedCheck]] = relationship(
         back_populates="scenario", cascade="all, delete-orphan"
     )
+    metadata_row: Mapped[ScenarioMetadata | None] = relationship(
+        back_populates="scenario",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
 
 class Observation(Base):
@@ -118,6 +123,40 @@ class Report(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     scenario: Mapped[Scenario] = relationship(back_populates="reports")
+
+
+SCENARIO_METADATA_FIELDS: tuple[str, ...] = (
+    "scope_authorization",
+    "test_data_used",
+    "expected_behavior",
+    "actual_behavior",
+    "security_impact",
+    "limitations",
+    "recommended_fix",
+)
+
+
+class ScenarioMetadata(Base):
+    """Operator-supplied prose used to populate Bug Bounty / QA report sections."""
+
+    __tablename__ = "scenario_metadata"
+
+    scenario_id: Mapped[int] = mapped_column(
+        ForeignKey("scenarios.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    scope_authorization: Mapped[str] = mapped_column(Text, default="")
+    test_data_used: Mapped[str] = mapped_column(Text, default="")
+    expected_behavior: Mapped[str] = mapped_column(Text, default="")
+    actual_behavior: Mapped[str] = mapped_column(Text, default="")
+    security_impact: Mapped[str] = mapped_column(Text, default="")
+    limitations: Mapped[str] = mapped_column(Text, default="")
+    recommended_fix: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+    scenario: Mapped[Scenario] = relationship(back_populates="metadata_row")
 
 
 class DelayedCheck(Base):

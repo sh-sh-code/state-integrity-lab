@@ -16,6 +16,7 @@ from app.models import (
     Observation,
     Report,
     Scenario,
+    ScenarioMetadata,
     Transition,
 )
 
@@ -151,6 +152,135 @@ def _do_no_harm_block() -> list[str]:
     ]
 
 
+_PLACEHOLDER = "_(to be filled in by the operator before submission — see `sil scenario annotate --help`)_"
+
+
+def _prose_section(title: str, value: str, do_redact: bool) -> list[str]:
+    body = _maybe_redact(value.strip(), do_redact) if value and value.strip() else _PLACEHOLDER
+    return [f"## {title}", "", body, ""]
+
+
+def _section_scope_and_auth(meta: ScenarioMetadata | None, do_redact: bool) -> list[str]:
+    return _prose_section(
+        "Scope and Authorization",
+        meta.scope_authorization if meta else "",
+        do_redact,
+    )
+
+
+def _section_test_data(meta: ScenarioMetadata | None, do_redact: bool) -> list[str]:
+    return _prose_section(
+        "Test Data Used",
+        meta.test_data_used if meta else "",
+        do_redact,
+    )
+
+
+def _section_expected_actual(
+    scenario: Scenario, meta: ScenarioMetadata | None, do_redact: bool
+) -> list[str]:
+    expected = (meta.expected_behavior if meta else "") or scenario.hypothesis
+    actual = meta.actual_behavior if meta else ""
+    out = ["## Expected vs Actual", ""]
+    out.append("**Expected:**")
+    out.append("")
+    out.append(_maybe_redact(expected.strip(), do_redact) if expected.strip() else _PLACEHOLDER)
+    out.append("")
+    out.append("**Actual:**")
+    out.append("")
+    out.append(_maybe_redact(actual.strip(), do_redact) if actual.strip() else _PLACEHOLDER)
+    out.append("")
+    return out
+
+
+def _section_security_impact(meta: ScenarioMetadata | None, do_redact: bool) -> list[str]:
+    return _prose_section(
+        "Security Impact",
+        meta.security_impact if meta else "",
+        do_redact,
+    )
+
+
+def _section_limitations(meta: ScenarioMetadata | None, do_redact: bool) -> list[str]:
+    return _prose_section(
+        "Limitations",
+        meta.limitations if meta else "",
+        do_redact,
+    )
+
+
+def _section_recommended_fix(meta: ScenarioMetadata | None, do_redact: bool) -> list[str]:
+    return _prose_section(
+        "Recommended Fix Direction",
+        meta.recommended_fix if meta else "",
+        do_redact,
+    )
+
+
+def _section_evidence(scenario: Scenario, do_redact: bool) -> list[str]:
+    """Compact, deduplicated list of artifact paths grouped by phase.
+
+    Useful as the "Evidence" section in a Bug Bounty report — the operator
+    points reviewers at the underlying SIL artifact directory.
+    """
+    out = ["## Evidence", ""]
+    by_phase: dict[str, list[Observation]] = {}
+    for obs in scenario.observations:
+        by_phase.setdefault(obs.phase, []).append(obs)
+    if not by_phase:
+        out.append("_No observations recorded._")
+        out.append("")
+        return out
+    for phase in ("before", "after", "delayed_after"):
+        items = by_phase.get(phase, [])
+        if not items:
+            continue
+        out.append(f"### {phase}")
+        out.append("")
+        for obs in sorted(items, key=lambda o: o.created_at):
+            if obs.artifact_path:
+                path_display = _maybe_redact(obs.artifact_path, do_redact)
+                out.append(f"- `{path_display}` ({obs.observer_type})")
+        out.append("")
+    out.append(
+        "_Reviewers should request the artifact directory or the report bundle "
+        "rather than a forward of secrets via chat._"
+    )
+    out.append("")
+    return out
+
+
+def _section_timeline(scenario: Scenario) -> list[str]:
+    """Auto-built timeline interleaving observations, transitions, and delayed checks."""
+    events: list[tuple[datetime, str]] = []
+    for obs in scenario.observations:
+        events.append(
+            (
+                obs.created_at,
+                f"observe[{obs.phase}] #{obs.id} {obs.observer_type}",
+            )
+        )
+    for tr in scenario.transitions:
+        events.append((tr.created_at, f"transition #{tr.id} {tr.transition_type} by {tr.performed_by}"))
+    for d in scenario.delayed_checks:
+        events.append((d.run_after, f"delayed_check #{d.id} due"))
+        if d.executed_at:
+            events.append((d.executed_at, f"delayed_check #{d.id} executed"))
+    for diff in scenario.diffs:
+        events.append((diff.created_at, f"diff #{diff.id} {diff.diff_type} -> {diff.severity_hint}"))
+
+    out = ["## Timeline", ""]
+    if not events:
+        out.append("_No events recorded._")
+        out.append("")
+        return out
+    events.sort(key=lambda e: e[0])
+    for ts, label in events:
+        out.append(f"- {_format_dt(ts)} — {label}")
+    out.append("")
+    return out
+
+
 def generate_markdown_report(
     session: Session,
     scenario_id: int,
@@ -191,6 +321,13 @@ def generate_markdown_report(
 
     lines.extend(_do_no_harm_block())
 
+    meta = scenario.metadata_row
+    lines.extend(_section_scope_and_auth(meta, do_redact))
+    lines.extend(_section_test_data(meta, do_redact))
+    lines.extend(_section_timeline(scenario))
+    lines.extend(_section_expected_actual(scenario, meta, do_redact))
+    lines.extend(_section_security_impact(meta, do_redact))
+
     lines.append("## Observations")
     lines.append("")
     lines.extend(_section_observations(scenario.observations, do_redact))
@@ -203,9 +340,14 @@ def generate_markdown_report(
     lines.append("")
     lines.extend(_section_diffs(scenario.diffs, do_redact))
 
+    lines.extend(_section_evidence(scenario, do_redact))
+
     lines.append("## Delayed checks")
     lines.append("")
     lines.extend(_section_delayed(scenario.delayed_checks))
+
+    lines.extend(_section_limitations(meta, do_redact))
+    lines.extend(_section_recommended_fix(meta, do_redact))
 
     lines.append("## Operator notes")
     lines.append("")
