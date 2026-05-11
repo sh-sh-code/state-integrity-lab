@@ -211,6 +211,12 @@ usable for real Bug Bounty / QA submissions.
   [`methodology.md`](docs/methodology.md),
   [`scenario_playbook.md`](docs/scenario_playbook.md),
   [`report_quality.md`](docs/report_quality.md).
+- **`sil scenario export`** packs a scenario into a single zip
+  (`manifest.json` + `report.md` + `artifacts/<rel>/...`) for hand-off
+  to Bug Bounty triage or to another operator. The manifest carries
+  SHA-256 of every member so reviewers can detect tampering. Default
+  is `--redact`, and the exporter refuses to include
+  `storage_state.json` or write the bundle inside `artifacts/`.
 
 ### Pre-flight checklist before testing a real service
 

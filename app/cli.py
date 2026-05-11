@@ -36,6 +36,7 @@ from app.diff import (
     diff_text,
     weighted_severity,
 )
+from app.exporters import ExportSafetyError, export_scenario
 from app.models import (
     OBSERVATION_PHASES,
     SCENARIO_METADATA_FIELDS,
@@ -251,6 +252,52 @@ def scenario_annotate(
         session.add(meta)
         session.flush()
         console.print(f"[green]annotated scenario[/green] id={scenario_id}")
+
+
+@scenario_app.command("export")
+def scenario_export(
+    scenario_id: int = typer.Option(..., "--scenario"),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        help=(
+            "Output file or directory. Defaults to "
+            "<reports_dir>/scenario_<id>_export_<ts>.zip."
+        ),
+    ),
+    redact: bool = typer.Option(
+        True,
+        "--redact/--no-redact",
+        help="Redact emails / UUIDs / token-like strings in the included report.md.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force/--no-force",
+        help="Overwrite the output bundle if it already exists.",
+    ),
+) -> None:
+    """Pack a scenario (manifest + report + artifacts) into a zip for hand-off."""
+    init_db()
+    with session_scope() as session:
+        try:
+            result = export_scenario(
+                session,
+                scenario_id,
+                output_path=output,
+                redact_secrets=redact,
+                force=force,
+            )
+        except ExportSafetyError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+    console.print(f"[green]wrote export bundle[/green] {result.bundle_path}")
+    console.print(f"  files: {result.files_count}")
+    console.print(f"  size:  {result.bundle_size} bytes")
+    console.print(f"  sha256: {result.bundle_sha256}")
+    if not result.redaction_applied:
+        console.print(
+            "[yellow]warning:[/yellow] --no-redact was used. Hand this bundle "
+            "to reviewers only via a trusted channel."
+        )
 
 
 @scenario_app.command("show-metadata")

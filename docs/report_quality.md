@@ -68,11 +68,25 @@ Avoid:
 ## 5. Evidence
 
 The `Evidence` section in the SIL report points reviewers at the artifact
-directory. Include in your final submission:
+directory. The easiest way to ship that is `sil scenario export`:
 
-- `sil report generate ...` Markdown.
-- The artifact directory (zip it; do **not** upload to a public paste).
-- The diff image (`diff_*.png`) for screenshot findings.
+```
+sil scenario export --scenario <id>
+# wrote export bundle .../scenario_0001_export_<ts>.zip
+#   files: 7
+#   size:  18421 bytes
+#   sha256: 5e7c…
+```
+
+The bundle is a single zip containing `manifest.json` (with SHA-256 of
+every member), `report.md` (redacted by default), and the artifact tree.
+Include in your final submission:
+
+- That zip, transmitted via a channel the program acknowledges (signed
+  upload, encrypted email, program portal — **not** public paste).
+- The bundle's SHA-256 as printed by `sil scenario export`.
+- The diff image (`diff_*.png`) for screenshot findings — automatically
+  picked up by the exporter when it lives next to an after artifact.
 
 Do **not** include:
 
