@@ -116,9 +116,20 @@ The default `--redact` patterns in `sil report` cover:
 
 - Email addresses → `[REDACTED_EMAIL]`
 - UUIDs → `[REDACTED_UUID]`
+- PEM private-key blocks → `[REDACTED_PRIVATE_KEY]`
+- JWTs (`eyJ…` three base64url segments) → `[REDACTED_JWT]`
+- GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`) → `[REDACTED_GITHUB_TOKEN]`
+- Slack tokens (`xox[abprso]-…`) → `[REDACTED_SLACK_TOKEN]`
+- Google API keys (`AIza…`, 39 chars) → `[REDACTED_GOOGLE_API_KEY]`
+- AWS access key IDs (`AKIA…` / `ASIA…`) → `[REDACTED_AWS_KEY_ID]`
 - `sk_*` / `pk_*` / `key_*` / `token_*` / `api_*` token-like strings
 - `Bearer <opaque>` tokens
 - IPv4 addresses
+
+Artifact paths in both the Observations and Evidence sections of the
+generated report go through the same redaction pass, so a sensitive
+substring embedded in a filename (`alice@example.com`, `AKIA…`, etc.) is
+masked in both places.
 
 Always still review by hand. Domain-specific identifiers (`org_`, `team_`,
 internal route names) are not auto-masked because they often *are* what

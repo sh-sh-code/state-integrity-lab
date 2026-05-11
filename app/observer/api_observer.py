@@ -106,6 +106,27 @@ class RequestBudgetExceeded(RuntimeError):
     """Raised when the call would exceed the per-invocation `max_requests` cap."""
 
 
+# Sibling auth surfaces a templated request must NEVER carry, regardless of the
+# template's own `auth_header`. The template promises that credentials come
+# only from `token_env`; allowing any of these via `extra_headers` would
+# silently defeat that promise for in-process Python callers.
+_CREDENTIAL_HEADER_DENYLIST: frozenset[str] = frozenset(
+    {
+        "authorization",
+        "proxy-authorization",
+        "cookie",
+        "set-cookie",
+        "x-api-key",
+        "x-auth-token",
+        "x-access-token",
+        "x-csrf-token",
+        "x-forwarded-user",
+        "x-forwarded-email",
+        "x-forwarded-for",
+    }
+)
+
+
 @dataclass(frozen=True)
 class APITemplate:
     name: str
@@ -211,10 +232,16 @@ def fetch_api_template(
     headers = {template.auth_header: template.auth_value(token)}
     if extra_headers:
         for k, v in extra_headers.items():
-            if k.lower() == template.auth_header.lower():
+            lowered = k.lower()
+            if lowered == template.auth_header.lower():
                 raise ValueError(
                     f"extra_headers must not override {template.auth_header}; "
                     "auth must come from the template's token_env."
+                )
+            if lowered in _CREDENTIAL_HEADER_DENYLIST:
+                raise ValueError(
+                    f"extra_headers must not carry credential-bearing header {k!r}; "
+                    "the template guarantees credentials come only from token_env."
                 )
             headers[k] = v
 

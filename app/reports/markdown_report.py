@@ -23,6 +23,26 @@ from app.models import (
 _REDACT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), "[REDACTED_EMAIL]"),
     (re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"), "[REDACTED_UUID]"),
+    # PEM private-key blocks (any flavour: RSA, EC, OPENSSH, etc.).
+    (
+        re.compile(
+            r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]+?-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----"
+        ),
+        "[REDACTED_PRIVATE_KEY]",
+    ),
+    # JWTs (three base64url segments).
+    (
+        re.compile(r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b"),
+        "[REDACTED_JWT]",
+    ),
+    # GitHub Personal Access Tokens / OAuth / app / refresh / server tokens.
+    (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"), "[REDACTED_GITHUB_TOKEN]"),
+    # Slack tokens.
+    (re.compile(r"\bxox[abprsoe]-[A-Za-z0-9-]{10,}\b"), "[REDACTED_SLACK_TOKEN]"),
+    # Google API keys.
+    (re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"), "[REDACTED_GOOGLE_API_KEY]"),
+    # AWS access key IDs.
+    (re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), "[REDACTED_AWS_KEY_ID]"),
     (re.compile(r"\b(sk|pk|key|token|api)[_-][A-Za-z0-9_-]{8,}\b"), "[REDACTED_TOKEN]"),
     (re.compile(r"\bBearer\s+[A-Za-z0-9._-]{12,}\b"), "Bearer [REDACTED_TOKEN]"),
     (re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "[REDACTED_IP]"),
@@ -68,7 +88,8 @@ def _section_observations(
                 f"- **#{obs.id}** `{obs.observer_type}` at {_format_dt(obs.created_at)}"
             )
             if obs.artifact_path:
-                lines.append(f"  - artifact: `{obs.artifact_path}`")
+                path_display = _maybe_redact(obs.artifact_path, do_redact)
+                lines.append(f"  - artifact: `{path_display}`")
             if obs.note:
                 snippet = _maybe_redact(obs.note.strip(), do_redact)
                 lines.append(f"  - note: {snippet}")
