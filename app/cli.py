@@ -107,14 +107,30 @@ def _check_phase(phase: str) -> None:
 
 
 @app.command()
-def init() -> None:
-    """Create the SQLite DB and artifact / report directories."""
+def init(
+    wizard: bool = typer.Option(
+        False,
+        "--wizard/--no-wizard",
+        help="After DB setup, walk the operator through creating a first scenario.",
+    ),
+) -> None:
+    """Create the SQLite DB and artifact / report directories.
+
+    With `--wizard`, also walk the operator through picking a scenario
+    template, recording the scope source, generating a probe signature,
+    and scheduling delayed re-observations.
+    """
     settings = get_settings()
     settings.ensure_dirs()
     init_db(settings)
     console.print(f"[green]initialized[/green] db={settings.db_path}")
     console.print(f"           artifacts={settings.artifacts_dir}")
     console.print(f"           reports  ={settings.reports_dir}")
+    if wizard:
+        from app.wizard import run_wizard
+
+        with session_scope() as session:
+            run_wizard(session, console)
 
 
 # ---------- scenario ----------

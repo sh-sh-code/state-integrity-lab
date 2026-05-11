@@ -217,6 +217,13 @@ usable for real Bug Bounty / QA submissions.
   SHA-256 of every member so reviewers can detect tampering. Default
   is `--redact`, and the exporter refuses to include
   `storage_state.json` or write the bundle inside `artifacts/`.
+- **`sil init --wizard`** walks a first-time operator through choosing
+  a template, recording the scope source (BB program URL / sandbox /
+  QA charter), generating a `SIL-PROBE-<rand>` signature, and
+  scheduling 5m / 1h / 24h re-observation prompts — all in a single
+  sub-minute interactive flow. The wizard never makes network
+  requests, never asks for credentials, and never logs in; it only
+  creates DB rows.
 
 ### Pre-flight checklist before testing a real service
 
