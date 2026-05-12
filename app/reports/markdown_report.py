@@ -10,9 +10,11 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
+from app.findings import linked_diff_ids
 from app.models import (
     DelayedCheck,
     DiffResult,
+    Finding,
     Observation,
     Report,
     Scenario,
@@ -238,6 +240,47 @@ def _section_recommended_fix(meta: ScenarioMetadata | None, do_redact: bool) -> 
     )
 
 
+_SEVERITY_ORDER: dict[str, int] = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
+
+
+def _section_findings(findings: Iterable[Finding], do_redact: bool) -> list[str]:
+    items = list(findings)
+    out = ["## Findings", ""]
+    if not items:
+        out.append("_No findings recorded yet._")
+        out.append("")
+        return out
+    items.sort(
+        key=lambda f: (-_SEVERITY_ORDER.get(f.severity, 0), f.created_at),
+    )
+    for f in items:
+        title = _maybe_redact(f.title, do_redact)
+        out.append(f"### Finding #{f.id} — {title}")
+        out.append("")
+        out.append(f"- severity: `{f.severity}`")
+        out.append(f"- status:   `{f.status}`")
+        if f.external_id:
+            out.append(f"- external_id: `{_maybe_redact(f.external_id, do_redact)}`")
+        diffs = linked_diff_ids(f)
+        if diffs:
+            out.append(f"- linked diffs: {', '.join(f'#{d}' for d in diffs)}")
+        if f.bounty_amount is not None:
+            out.append(
+                f"- bounty: `{f.bounty_amount} {f.bounty_currency or '?'}`"
+            )
+        out.append(f"- created: {_format_dt(f.created_at)}")
+        if f.closed_at:
+            out.append(f"- closed:  {_format_dt(f.closed_at)}")
+        if f.description:
+            out.append("")
+            out.append(_maybe_redact(f.description.strip(), do_redact))
+        if f.note:
+            out.append("")
+            out.append("_Note:_ " + _maybe_redact(f.note.strip(), do_redact))
+        out.append("")
+    return out
+
+
 def _section_evidence(scenario: Scenario, do_redact: bool) -> list[str]:
     """Compact, deduplicated list of artifact paths grouped by phase.
 
@@ -360,6 +403,8 @@ def generate_markdown_report(
     lines.append("## Diff results")
     lines.append("")
     lines.extend(_section_diffs(scenario.diffs, do_redact))
+
+    lines.extend(_section_findings(scenario.findings, do_redact))
 
     lines.extend(_section_evidence(scenario, do_redact))
 

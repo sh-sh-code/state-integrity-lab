@@ -224,6 +224,13 @@ usable for real Bug Bounty / QA submissions.
   sub-minute interactive flow. The wizard never makes network
   requests, never asks for credentials, and never logs in; it only
   creates DB rows.
+- **Findings registry** (`sil finding open/list/show/update`) tracks
+  operator-curated findings through the full triage lifecycle
+  (`open / submitted / needs_more_info / accepted / fixed / wont_fix
+  / duplicate`), with severity, external program id, linked diff ids,
+  and optional bounty payout fields. Findings are rendered into the
+  report's new "Findings" section (highest severity first) and
+  included verbatim in `sil scenario export` manifests.
 
 ### Pre-flight checklist before testing a real service
 

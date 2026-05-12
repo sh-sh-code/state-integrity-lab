@@ -37,11 +37,21 @@ from app.diff import (
     weighted_severity,
 )
 from app.exporters import ExportSafetyError, export_scenario
+from app.findings import (
+    FindingError,
+    linked_diff_ids,
+    list_findings,
+    open_finding,
+    update_finding,
+)
 from app.models import (
+    FINDING_SEVERITIES,
+    FINDING_STATUSES,
     OBSERVATION_PHASES,
     SCENARIO_METADATA_FIELDS,
     SCENARIO_STATUSES,
     DiffResult,
+    Finding,
     Observation,
     Scenario,
     ScenarioMetadata,
@@ -88,6 +98,7 @@ transition_app = typer.Typer(help="Mark state transitions performed by a human."
 report_app = typer.Typer(help="Generate Markdown reports.")
 diff_app = typer.Typer(help="Diff bundles, etc.")
 scheduler_app = typer.Typer(help="Inspect and execute delayed-check prompts.")
+finding_app = typer.Typer(help="Curate findings tied to scenarios.")
 
 app.add_typer(scenario_app, name="scenario")
 app.add_typer(observe_app, name="observe")
@@ -95,6 +106,7 @@ app.add_typer(transition_app, name="transition")
 app.add_typer(report_app, name="report")
 app.add_typer(diff_app, name="bundle")
 app.add_typer(scheduler_app, name="scheduler")
+app.add_typer(finding_app, name="finding")
 
 console = Console()
 
@@ -850,6 +862,145 @@ def scheduler_mark_done(
         check = mark_done(session, check_id)
         console.print(
             f"[green]marked done[/green] id={check.id} executed_at={check.executed_at}"
+        )
+
+
+# ---------- finding ----------
+
+
+@finding_app.command("open")
+def finding_open(
+    scenario_id: int = typer.Option(..., "--scenario"),
+    title: str = typer.Option(..., "--title"),
+    description: str = typer.Option("", "--description"),
+    severity: str = typer.Option(
+        "medium", "--severity", help=f"One of: {', '.join(FINDING_SEVERITIES)}."
+    ),
+    diff: list[int] = typer.Option([], "--diff", help="DiffResult id to link. Repeatable."),
+    external_id: str = typer.Option("", "--external-id", help="BB program report id, etc."),
+    note: str = typer.Option("", "--note"),
+) -> None:
+    """Register a new operator-curated finding (state: open)."""
+    init_db()
+    with session_scope() as session:
+        try:
+            finding = open_finding(
+                session,
+                scenario_id,
+                title=title,
+                description=description,
+                severity=severity,
+                diff_ids=diff,
+                external_id=external_id,
+                note=note,
+            )
+        except FindingError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        console.print(f"[green]opened finding[/green] id={finding.id} severity={finding.severity}")
+
+
+@finding_app.command("list")
+def finding_list(
+    scenario_id: int | None = typer.Option(None, "--scenario"),
+    status: str | None = typer.Option(None, "--status"),
+) -> None:
+    """List findings, optionally filtered by scenario and / or status."""
+    init_db()
+    with session_scope() as session:
+        try:
+            rows = list_findings(session, scenario_id=scenario_id, status=status)
+        except FindingError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        table = Table("id", "scenario", "severity", "status", "title", "external_id")
+        for f in rows:
+            table.add_row(
+                str(f.id),
+                str(f.scenario_id),
+                f.severity,
+                f.status,
+                (f.title[:60] + "…") if len(f.title) > 60 else f.title,
+                f.external_id or "—",
+            )
+        console.print(table)
+
+
+@finding_app.command("show")
+def finding_show(
+    finding_id: int = typer.Option(..., "--id"),
+) -> None:
+    """Show all fields of a finding."""
+    init_db()
+    with session_scope() as session:
+        finding = session.get(Finding, finding_id)
+        if finding is None:
+            raise typer.BadParameter(f"finding id={finding_id} not found")
+        console.print(f"[bold]#{finding.id}[/bold] {finding.title}")
+        console.print(f"  scenario:    {finding.scenario_id}")
+        console.print(f"  severity:    {finding.severity}")
+        console.print(f"  status:      {finding.status}")
+        console.print(f"  external_id: {finding.external_id or '—'}")
+        diffs = linked_diff_ids(finding)
+        if diffs:
+            console.print(f"  linked diffs: {diffs}")
+        if finding.bounty_amount is not None:
+            console.print(
+                f"  bounty:      {finding.bounty_amount} {finding.bounty_currency or '?'}"
+            )
+        console.print(f"  created_at:  {finding.created_at.isoformat(timespec='seconds')}")
+        console.print(f"  updated_at:  {finding.updated_at.isoformat(timespec='seconds')}")
+        if finding.closed_at:
+            console.print(f"  closed_at:   {finding.closed_at.isoformat(timespec='seconds')}")
+        if finding.description:
+            console.print("")
+            console.print("[bold]Description[/bold]")
+            console.print(finding.description)
+        if finding.note:
+            console.print("")
+            console.print("[bold]Note[/bold]")
+            console.print(finding.note)
+
+
+@finding_app.command("update")
+def finding_update(
+    finding_id: int = typer.Option(..., "--id"),
+    title: str | None = typer.Option(None, "--title"),
+    description: str | None = typer.Option(None, "--description"),
+    severity: str | None = typer.Option(
+        None, "--severity", help=f"One of: {', '.join(FINDING_SEVERITIES)}."
+    ),
+    status: str | None = typer.Option(
+        None, "--status", help=f"One of: {', '.join(FINDING_STATUSES)}."
+    ),
+    external_id: str | None = typer.Option(None, "--external-id"),
+    note: str | None = typer.Option(None, "--note"),
+    paid: int | None = typer.Option(None, "--paid", help="Bounty amount (smallest currency unit)."),
+    currency: str | None = typer.Option(None, "--currency", help="ISO 4217 code, e.g. USD."),
+) -> None:
+    """Update mutable fields on a finding. Only the flags you pass are touched."""
+    if all(
+        v is None
+        for v in (title, description, severity, status, external_id, note, paid, currency)
+    ):
+        raise typer.BadParameter("provide at least one field to update")
+    init_db()
+    with session_scope() as session:
+        try:
+            finding = update_finding(
+                session,
+                finding_id,
+                title=title,
+                description=description,
+                severity=severity,
+                status=status,
+                external_id=external_id,
+                note=note,
+                bounty_amount=paid,
+                bounty_currency=currency,
+            )
+        except FindingError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        console.print(
+            f"[green]updated finding[/green] id={finding.id} status={finding.status}"
         )
 
 

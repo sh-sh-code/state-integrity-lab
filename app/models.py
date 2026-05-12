@@ -70,6 +70,9 @@ class Scenario(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    findings: Mapped[list[Finding]] = relationship(
+        back_populates="scenario", cascade="all, delete-orphan"
+    )
 
 
 class Observation(Base):
@@ -134,6 +137,48 @@ SCENARIO_METADATA_FIELDS: tuple[str, ...] = (
     "limitations",
     "recommended_fix",
 )
+
+
+FINDING_STATUSES: tuple[str, ...] = (
+    "open",            # the operator has identified the issue locally
+    "submitted",       # reported to the BB program / QA tracker
+    "needs_more_info", # program / triager asked for more info
+    "accepted",        # program accepted; severity / payout pending
+    "fixed",           # operator confirmed the fix re-runs cleanly
+    "wont_fix",        # program acknowledged but will not fix
+    "duplicate",       # marked as duplicate by the program
+)
+FINDING_SEVERITIES: tuple[str, ...] = ("info", "low", "medium", "high", "critical")
+
+
+class Finding(Base):
+    """Operator-curated finding tied to a scenario.
+
+    Distinct from `DiffResult` (which is an auto-generated diff). A finding
+    is what the operator decides is worth tracking through triage, fix, and
+    bounty award.
+    """
+
+    __tablename__ = "findings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scenario_id: Mapped[int] = mapped_column(ForeignKey("scenarios.id", ondelete="CASCADE"))
+    title: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str] = mapped_column(Text, default="")
+    severity: Mapped[str] = mapped_column(String(32), default="medium")
+    status: Mapped[str] = mapped_column(String(32), default="open")
+    external_id: Mapped[str] = mapped_column(String(128), default="")
+    diff_ids: Mapped[str] = mapped_column(Text, default="[]")  # JSON list of DiffResult.id
+    note: Mapped[str] = mapped_column(Text, default="")
+    bounty_amount: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bounty_currency: Mapped[str] = mapped_column(String(8), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    scenario: Mapped[Scenario] = relationship(back_populates="findings")
 
 
 class ScenarioMetadata(Base):

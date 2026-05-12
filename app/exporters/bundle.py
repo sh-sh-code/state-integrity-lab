@@ -44,6 +44,25 @@ _FORBIDDEN_NAMES: tuple[str, ...] = ("storage_state.json", "storage-state.json")
 BUNDLE_FORMAT_VERSION = 1
 
 
+def _parse_diff_ids_for_manifest(raw: str) -> list[int]:
+    """Mirror of `app.findings._parse_diff_ids` without a circular import risk."""
+    if not raw:
+        return []
+    try:
+        loaded = json.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(loaded, list):
+        return []
+    out: list[int] = []
+    for item in loaded:
+        try:
+            out.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 class ExportSafetyError(RuntimeError):
     """Raised when an export would violate the safety rules above."""
 
@@ -304,6 +323,24 @@ def _build_manifest(
                 "created_at": _fmt_dt(d.created_at),
             }
             for d in scenario.diffs
+        ],
+        "findings": [
+            {
+                "id": f.id,
+                "title": f.title,
+                "description": f.description,
+                "severity": f.severity,
+                "status": f.status,
+                "external_id": f.external_id,
+                "diff_ids": _parse_diff_ids_for_manifest(f.diff_ids),
+                "note": f.note,
+                "bounty_amount": f.bounty_amount,
+                "bounty_currency": f.bounty_currency,
+                "created_at": _fmt_dt(f.created_at),
+                "updated_at": _fmt_dt(f.updated_at),
+                "closed_at": _fmt_dt(f.closed_at),
+            }
+            for f in scenario.findings
         ],
         "delayed_checks": [
             {

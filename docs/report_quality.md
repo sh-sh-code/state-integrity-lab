@@ -167,7 +167,28 @@ Programs commonly mark these as informative or won't-fix:
 If your finding fits any of the above, fold it into a bundled
 "hardening recommendations" note rather than a standalone report.
 
-## 10. Pre-submission checklist
+## 10. Tracking findings through triage
+
+`sil finding open --scenario <id> --title "<surface>: <invariant> after <transition>"
+--severity <level> --diff <diff_id>` opens a finding bound to the diff(s)
+that surfaced it. Walk it through the lifecycle:
+
+```
+open            ← initial state after `sil finding open`
+submitted       ← --status submitted --external-id H1-12345
+needs_more_info ← triager asked for clarification
+accepted        ← program accepted; bounty pending
+fixed           ← --status fixed (auto-stamps closed_at)
+wont_fix        ← --status wont_fix (auto-stamps closed_at)
+duplicate       ← --status duplicate (auto-stamps closed_at)
+```
+
+When the program awards a bounty, record it: `sil finding update --id <id>
+--paid 50000 --currency USD` (units are the smallest currency unit;
+`50000` means USD 500.00). The amount flows into the next exported bundle's
+`manifest.json` and is rendered in `report.md` under that finding.
+
+## 11. Pre-submission checklist
 
 - [ ] Title fits `<surface>: <bad invariant> after <transition>`.
 - [ ] Reproduction steps are numbered and copy-pastable.
